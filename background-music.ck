@@ -1,74 +1,8 @@
 adc => FFT fft =^ Centroid cent => blackhole; //IFFT ifft => Gain g => dac;
-2048 => int fft_size => fft.size => Windowing.hann => fft.window => ifft.window;
+2048 => int fft_size => fft.size => Windowing.hann => fft.window;
+adc => Gain g => dac;
 fft_size / 4 => int hop_size;
-g.gain(0.4);
-
-class Message {
-    string m_words[0];
-    int m_write_head, m_size;
-    string m_status;
-
-    fun static Message create(int size) {
-	return (new Message).init(size);
-    }
-
-    fun Message init(int size) {
-	m_words.size(size);
-	size => m_size;
-	0 => m_write_head;
-	"writing" => m_status;
-	return this;
-    }
-
-    fun Message push(float word) {
-	if (is_writable()) {
-	    push_word(word);
-	}
-	return this;
-    }
-
-    fun string read() {
-	"" => string output;
-	for (int i; i < m_size; i++) {
-	    m_words[i] +=> output;
-	}
-	return output;
-    }
-
-    fun int is_writable() {
-	return m_status == "writing";
-    }
-
-    fun int is_readable() {
-	return m_status == "done";
-    }
-
-    fun Message reset() {
-	0 => m_write_head;
-	"writing" => m_status;
-	return this;
-    }
-
-    fun void push_word(float word) {
-	process_word(word) => m_words[m_write_head];
-	update_write_head();
-    }
-
-    fun void update_write_head() {
-	1 +=> m_write_head;
-	if (m_write_head == m_size) {
-	    "done" => m_status;
-	}
-    }
-
-    fun string process_word(float word) {
-	(word + "") => string word_string;
-	word_string.substring(0,1) == "-" ? 1 : 0 => int start_idx;
-	word_string.substring(start_idx, 1) => string d1;
-	word_string.substring(start_idx + 2, 1) => string d2;
-	return d1 + d2;
-    }
-}
+g.gain(0.1);
 
 class LisaBuffer extends Chubgraph {
     inlet => LiSa m_sampler => Gain m_gain => outlet;
@@ -83,7 +17,7 @@ class LisaBuffer extends Chubgraph {
 	gain => m_gain.gain;
 	rate => m_sampler.rate;
 	"created" => m_status;
-	duration * 0.2 => m_sampler.recRamp;
+	duration => m_sampler.recRamp;
 	return this;
     }
 
@@ -117,7 +51,7 @@ class LBId {
     string m_id;
 
     fun static LBId from_freq_mag(float freq, float mag) {
-	return (new LBId).init(val);
+	return (new LBId).init(freq, mag);
     }
 
     fun static LBId from_zero() {
@@ -134,7 +68,7 @@ class LBId {
 	return m_id;
     }
     
-    fun int matches(LBId) {
+    fun int matches(LBId other) {
 	return other.m_id == m_id;
     }
 
@@ -145,7 +79,7 @@ class LBId {
 	else return 0;
     }
 
-    fun int is_less_than_or_equal_to(LBid other) {
+    fun int is_less_than_or_equal_to(LBId other) {
 	if (other.m_id == m_id) {
 	    return other.m_magnitude <= m_magnitude;
 	}
@@ -157,15 +91,22 @@ class LBId {
 	val_string.find('.') => int dot_index;
 	val_string.find('-') => int dash_index;
 	dash_index > 0 ? dash_index : 0 => int start_index;
-	return val.substring(start_index, dot_index);	
+	return val_string.substring(start_index+1, 2);
+    }
+
+    fun void print() {
+	chout <= m_id <= " " <= m_magnitude <= "\n";
     }
 }
 
 class LBHolder {
     LisaBuffer m_buffers[0];
-    LBid m_ids[0];
+    LBId m_ids[0];
+    int m_id_buffer_index[0];
     float m_buf_rate, m_buf_gain;
     dur m_buf_dur;
+    0 => int m_current_write_index;
+    int m_max;
 
     fun static LBHolder create(UGen in, UGen out,
 			       int num_buffers, dur buf_dur, float buf_rate, float buf_gain) {
@@ -173,12 +114,13 @@ class LBHolder {
     }
 
     fun LBHolder init(UGen in, UGen out, int num_buffers, dur buf_dur, float buf_rate, float buf_gain) {
-	m_buffers.size(num_buffers);
+	num_buffers => m_buffers.size => m_id_buffer_index.size;
 	buf_dur => m_buf_dur;
 	buf_rate => m_buf_rate;
 	buf_gain => m_buf_gain;
+	num_buffers => m_max;
 	for (int i; i < num_buffers; i++) {
-	    LisaBuffer.create(buf_dur, buf_rate, buf_gain) @=> m_buffers[i];
+	    LisaBuffer.create(buf_dur, buf_rate * Math.random2f(0.1, 1.0), buf_gain) @=> m_buffers[i];
 	    in => m_buffers[i] => out;
 	}
 	return this;
@@ -186,36 +128,50 @@ class LBHolder {
 
     
     fun int should_overwrite(LBId id) {
-	return has_buffer(id) && get_buffer_id(id).
-	    is_less_than_or_equal_to(id);
+	if (has_buffer(id)) {
+	    get_buffer_id(id) @=> LBId compare;
+	    if (compare.is_less_than_or_equal_to(id) &&
+		Math.random2f(0.0, 0.7) > Math.random2f(0.6, 1.0)) {
+		return 1;
+	    }
+	    else return 0;
+	}
+	else return 0;
     }
 
     fun int should_create_new(LBId id) {
-	return does_not_have_buffer(id);
+	if (m_current_write_index < m_max && Math.random2f(0.0, 0.7) > Math.random2f(0.5, 1.0)) {
+	    return does_not_have_buffer(id);
+	}
+	else return 0;
     }
 
     fun int should_play(LBId id) {
-	return has_buffer(id);
+	return has_buffer(id) && Math.random2f(0.0, 0.7) > Math.random2f(0.5, 1.0);
     }
 
     fun void record_new(LBId id, dur record_length) {
-	m_buffers[id.id()].record(record_length);
-	m_ids << id;
+	add_new_buffer(id);
+	get_buffer(id).record(record_length);
     }
 
-    fun void overwrite_sound(LBId id, dur record_length) {
-	m_buffers[id.id()].record(record_length);
+    fun void overwrite(LBId id, dur record_length) {
+	get_buffer(id).record(record_length);
     }
 
     fun void play(LBId id, dur play_length) {
-	m_buffers[id.id()].play(record_length);
+	get_buffer(id).play(play_length);
     }
 
-    fun LBid get_buffer_id(LBId to_match) {
-	for (int i; i < m_ids.size()) {
+    fun LBId get_buffer_id(LBId to_match) {
+	for (int i; i < m_ids.size(); i++) {
 	    if (m_ids[i].matches(to_match)) return m_ids[i];
 	}
 	return to_match;
+    }
+
+    fun LisaBuffer get_buffer(LBId id) {
+	return m_buffers[m_id_buffer_index[id.id()]];
     }
 
     fun int has_buffer(LBId id) {
@@ -223,6 +179,22 @@ class LBHolder {
 	    if (m_ids[i].matches(id)) return 1;
 	}
 	return 0;
+    }
+
+    fun int does_not_have_buffer(LBId id) {
+	return !has_buffer(id);
+    }
+
+    fun void add_new_buffer(LBId id) {
+	m_current_write_index => m_id_buffer_index[id.id()];
+	m_ids << id;
+	m_current_write_index++;
+    }
+
+    fun void print_ids() {
+	for (int i; i < m_ids.size(); i++) {
+	    m_ids[i].print();
+	}
     }
 }
 
@@ -232,15 +204,15 @@ class LBHolder {
 .76 => float buffer_rate;
 0.8 => float buffer_gain;
 5::second => dur buffer_dur;
-10 => int num_bufs;
+15 => int num_bufs;
 
-Message.create(id_size) @=> Message buffer_id;
 LBHolder.create(adc, dac, num_bufs, buffer_dur, buffer_rate, buffer_gain) @=> LBHolder buffers;
 
 <<< "begin", "" >>>;
 complex fft_spectrum[];
-LBId comparison_id;
+
 second / samp => float srate;
+LBId comparison_id;
 while (hop_size::samp => now) {
 
     /* get the polar value of the centroid from the fft_bins. */
@@ -252,23 +224,20 @@ while (hop_size::samp => now) {
     bin_pos_f * srate / 2.0 => float centroid_freq;
 
     /* construct id */
-    comparison_id.init(centroid_freq, centroid_pol.mag);
+    LBId.from_freq_mag(centroid_freq, centroid_pol.mag) @=> comparison_id;
 
     /* check if record or overwrite or play */
+    // buffers.print_ids();
     if (buffers.should_overwrite(comparison_id)) {
-	buffers.overwite(comparison_id);
+	<<< "overwriting: ", comparison_id.id(), "" >>>;
+	spork ~ buffers.overwrite(comparison_id, buffer_dur);
     }
     else if (buffers.should_create_new(comparison_id)) {
-	buffers.record_new(comparison_id);
+	<<< "creating new: ", comparison_id.id(), "" >>>;
+	spork ~ buffers.record_new(comparison_id, buffer_dur);
     }
     else if (buffers.should_play(comparison_id)) {
-	buffers.play(comparison_id);
-    }    
-}
-
-fun int contains(string coll[], string val) {
-    for (int i; i < coll.size(); i++) {
-	if (val == coll[i]) return 1;
+	<<< "playing: ", comparison_id.id(), "" >>>;
+	spork ~ buffers.play(comparison_id, buffer_dur);
     }
-    return 0;
 }
