@@ -33,10 +33,10 @@ class LisaBuffer extends Chubgraph {
     fun LisaBuffer play(dur duration) {
 	"playing" => m_status;
 	0::ms => m_sampler.playPos;
-	duration * 0.2 => m_sampler.rampUp;
+	duration * 0.3 => m_sampler.rampUp;
 	1 => m_sampler.play;
-	duration * 0.6 => now;
-	duration * 0.2 => m_sampler.rampDown;
+	duration * 0.4 => now;
+	duration * 0.3 => m_sampler.rampDown;
 	0 => m_sampler.play;
 	"playable" => m_status;
     }
@@ -120,7 +120,7 @@ class LBHolder {
 	buf_gain => m_buf_gain;
 	num_buffers => m_max;
 	for (int i; i < num_buffers; i++) {
-	    LisaBuffer.create(buf_dur, buf_rate * Math.random2f(0.1, 1.0), buf_gain) @=> m_buffers[i];
+	    LisaBuffer.create(buf_dur, buf_rate, buf_gain) @=> m_buffers[i];
 	    in => m_buffers[i] => out;
 	}
 	return this;
@@ -140,7 +140,7 @@ class LBHolder {
     }
 
     fun int should_create_new(LBId id) {
-	if (m_current_write_index < m_max && Math.random2f(0.0, 0.7) > Math.random2f(0.5, 1.0)) {
+	if (m_current_write_index < m_max && Math.random2f(0.0, 0.7) > Math.random2f(0.65, 1.0)) {
 	    return does_not_have_buffer(id);
 	}
 	else return 0;
@@ -201,10 +201,10 @@ class LBHolder {
 2 => int id_size;
 10 => int num_iters;
 0 => int count;
-.76 => float buffer_rate;
+1.0 => float buffer_rate;
 0.8 => float buffer_gain;
 5::second => dur buffer_dur;
-15 => int num_bufs;
+10 => int num_bufs;
 
 LBHolder.create(adc, dac, num_bufs, buffer_dur, buffer_rate, buffer_gain) @=> LBHolder buffers;
 

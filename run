@@ -1,0 +1,4 @@
+#!/bin/bash
+jackd -dalsa -dhw:1 &
+sleep 1
+chuck-jack background-music.ck
